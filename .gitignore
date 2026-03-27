@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 项目数据（隐私）
+data/
+!data/.gitkeep
+
+# 配置文件（包含隐私信息）
+config.yaml
+*.local.yaml
+
+# Cookies 和会话
+data/cookies/
+*.json
+
+# 调试文件
+*.html
+!*.html.example
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# Logs
+*.log
+
+# Qoder
+.qoder/
+
+# 其他
+*.bak
+*.tmp
