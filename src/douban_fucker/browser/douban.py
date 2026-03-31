@@ -339,73 +339,105 @@ class DoubanBrowser:
             print(f"处理封面上传时出错: {e}")
 
     def _check_existing_album(self, album: Album) -> Optional[str]:
-        """检查专辑是否已存在"""
+        """检查专辑是否已存在（标题+艺术家双重验证）"""
         try:
-            # 查找搜索结果中的唱片链接（URL 是数字 ID）
-            subject_links = self.page.query_selector_all("a[href*='/subject/']")
+            # 从搜索结果中提取每条结果的标题、艺术家、链接
+            results = self.page.evaluate("""() => {
+                const items = [];
+                // 豆瓣搜索结果中每个条目通常包含 subject 链接
+                const links = document.querySelectorAll('a[href*="/subject/"]');
+                for (const link of links) {
+                    const href = link.getAttribute('href') || '';
+                    if (!/\\/subject\\/\\d+/.test(href)) continue;
+                    const title = (link.textContent || '').trim();
+                    if (!title) continue;
+                    // 获取父容器的全部文本，用于提取艺术家信息
+                    let container = link.closest('tr, .item, .result, li, dd, td');
+                    if (!container) container = link.parentElement?.parentElement;
+                    const contextText = container ? container.textContent.trim() : '';
+                    items.push({ href, title, context: contextText.substring(0, 300) });
+                }
+                return items;
+            }""")
 
-            for link in subject_links:
-                href = link.get_attribute("href")
-                if href and "/subject/" in href:
-                    match = re.search(r"/subject/(\d+)", href)
-                    if match:
-                        title = link.text_content() or ""
-                        if self._titles_match(album.title, title):
-                            if not href.startswith("http"):
-                                href = f"https://music.douban.com{href}"
-                            return href
-        except Exception:
-            pass
+            for item in (results or []):
+                href = item.get("href", "")
+                result_title = item.get("title", "")
+                context = item.get("context", "")
+
+                if not self._title_matches(album.title, result_title):
+                    continue
+
+                # 验证艺术家是否匹配
+                if album.artist and not self._artist_matches(album.artist, context):
+                    print(f"  标题匹配但艺术家不符，跳过: {result_title}")
+                    continue
+
+                if not href.startswith("http"):
+                    href = f"https://music.douban.com{href}"
+                return href
+        except Exception as e:
+            print(f"  检查已存在唱片时出错: {e}")
         return None
 
-    def _titles_match(self, title1: str, title2: str) -> bool:
-        """检查两个标题是否匹配（严格匹配）"""
-        import re
+    def _title_matches(self, our_title: str, result_title: str) -> bool:
+        """检查标题是否匹配（严格）"""
+        t1 = our_title.lower().strip()
+        t2 = result_title.lower().strip()
 
-        t1 = title1.lower().strip()
-        t2 = title2.lower().strip()
+        if not t1 or not t2:
+            return False
 
-        # 1. 完全相同
+        # 完全相同
         if t1 == t2:
             return True
 
-        # 2. 去掉括号内容后完全相同
-        t1_clean = re.sub(r'\s*\([^)]*\)', '', t1).strip()
-        t2_clean = re.sub(r'\s*\([^)]*\)', '', t2).strip()
-        if t1_clean == t2_clean:
+        # 去掉括号内容后比较
+        t1_clean = re.sub(r'\s*[\(\[（][^)\]）]*[\)\]）]', '', t1).strip()
+        t2_clean = re.sub(r'\s*[\(\[（][^)\]）]*[\)\]）]', '', t2).strip()
+        if t1_clean and t2_clean and t1_clean == t2_clean:
             return True
 
-        # 3. 提取关键部分进行对比
-        # 提取 "Vol. 1", "Vol 1", "Volume 1", "第1卷" 等卷号信息
-        vol_pattern = r'vol\.?\s*(\d+)|volume\s*(\d+)|第(\d+)卷'
-        v1_match = re.search(vol_pattern, t1)
-        v2_match = re.search(vol_pattern, t2)
-
-        # 如果两边都有卷号，必须相同
-        if v1_match and v2_match:
-            vol1 = v1_match.group(1) or v1_match.group(2) or v1_match.group(3)
-            vol2 = v2_match.group(1) or v2_match.group(2) or v2_match.group(3)
-            if vol1 != vol2:
-                return False  # 卷号不同，不匹配
-
-        # 4. 关键词匹配 - 要求大部分关键词匹配
-        # 提取英文和中文词
-        words1 = set(re.findall(r'[a-zA-Z0-9\u4e00-\u9fff]+', t1))
-        words2 = set(re.findall(r'[a-zA-Z0-9\u4e00-\u9fff]+', t2))
-
-        # 过滤掉太短的词和常见词
-        stop_words = {'the', 'a', 'an', 'of', 'at', 'on', 'in', 'and', 'or', 'with', 'for', 'live', 'remastered', 'deluxe', 'edition', 'version'}
-        words1 = {w for w in words1 if len(w) > 2 and w.lower() not in stop_words}
-        words2 = {w for w in words2 if len(w) > 2 and w.lower() not in stop_words}
+        # 关键词匹配 - 过滤停用词后要求 90% 以上匹配
+        stop_words = {'the', 'a', 'an', 'of', 'at', 'on', 'in', 'and', 'or', 'for'}
+        words1 = {w for w in re.findall(r'[a-zA-Z0-9\u4e00-\u9fff]+', t1) if len(w) > 1 and w not in stop_words}
+        words2 = {w for w in re.findall(r'[a-zA-Z0-9\u4e00-\u9fff]+', t2) if len(w) > 1 and w not in stop_words}
 
         if not words1 or not words2:
-            return len(words1) == len(words2)
+            return False
 
-        # 计算匹配率
         common = words1 & words2
-        # 至少需要 80% 的关键词匹配
         match_ratio = len(common) / max(len(words1), len(words2))
-        return match_ratio >= 0.8
+        return match_ratio >= 0.9
+
+    def _artist_matches(self, our_artist: str, context_text: str) -> bool:
+        """检查艺术家是否出现在搜索结果上下文中"""
+        if not our_artist:
+            return True  # 没有艺术家信息则跳过验证
+
+        context_lower = context_text.lower()
+        artist_lower = our_artist.lower().strip()
+
+        # 完整名字出现在上下文中
+        if artist_lower in context_lower:
+            return True
+
+        # 去掉常见后缀再试（如 "Jr.", "Trio", "Quartet"）
+        artist_clean = re.sub(r'\s+(jr\.?|sr\.?|trio|quartet|quintet|sextet|orchestra|band|ensemble)$', '', artist_lower, flags=re.IGNORECASE).strip()
+        if artist_clean and artist_clean in context_lower:
+            return True
+
+        # 姓氏匹配（取最后一个词作为姓氏，至少3个字符）
+        parts = artist_lower.split()
+        if len(parts) >= 2:
+            surname = parts[-1].rstrip('.')
+            if len(surname) >= 3 and surname in context_lower:
+                # 姓氏匹配但需要至少名字首字母也出现
+                first_initial = parts[0][0]
+                if first_initial in context_lower:
+                    return True
+
+        return False
 
     def _click_add_no_barcode(self) -> bool:
         """点击添加无条形码按钮（已废弃，保留用于兼容性）"""

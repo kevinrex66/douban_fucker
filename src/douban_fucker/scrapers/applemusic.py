@@ -1,4 +1,4 @@
-"""Apple Music 爬虫 - 页面爬取"""
+"""Apple Music 爬虫 - iTunes API 搜索 + 页面爬取详情"""
 import json
 import re
 from typing import List, Optional
@@ -12,11 +12,10 @@ from .base import BaseScraper
 
 
 class AppleMusicScraper(BaseScraper):
-    """Apple Music 爬虫 - 使用页面爬取"""
+    """Apple Music 爬虫 - 使用 iTunes Search API 搜索，页面爬取获取详情"""
 
     name = "applemusic"
     base_url = "https://music.apple.com"
-    search_url = "https://music.apple.com/cn/search"
 
     def __init__(self):
         super().__init__()
@@ -33,121 +32,89 @@ class AppleMusicScraper(BaseScraper):
         }
 
     def search(self, query: str, limit: int = 10) -> List[SearchResult]:
-        """搜索专辑"""
+        """搜索专辑 - 使用 iTunes Search API"""
         results = []
+        seen_ids = set()
 
-        # Generate query variations - try shorter variations first for better results
-        # Apple Music search works better with shorter queries
-        query_variations = [
-            # Remove common filler words first (shortest)
-            query.replace(" at ", " ").replace(" the ", " "),
-            query.replace(" the ", " "),
-            query.replace(" at ", " "),
-            # Then try with minimal removal
-            re.sub(r"\s+", " ", query).strip(),
-            query,  # Original query last
-        ]
+        encoded_query = query.replace(" ", "+")
+        api_url = f"https://itunes.apple.com/search?term={encoded_query}&entity=album&country=cn&limit={limit}"
 
-        # Deduplicate variations
-        query_variations = list(dict.fromkeys(query_variations))
+        try:
+            with self._get_client() as client:
+                self._rate_limit()
+                response = client.get(api_url)
+                response.raise_for_status()
+                data = response.json()
 
-        seen_urls = set()
-        seen_titles = set()
+                for item in data.get("results", []):
+                    if len(results) >= limit:
+                        break
 
-        for q in query_variations:
-            if len(results) >= limit:
-                break
+                    collection_id = str(item.get("collectionId", ""))
+                    if not collection_id or collection_id in seen_ids:
+                        continue
+                    seen_ids.add(collection_id)
 
-            # URL encode the query - replace spaces with +
-            encoded_query = q.replace(" ", "+")
-            url = f"{self.search_url}?term={encoded_query}&entity=album"
+                    title = item.get("collectionName", "")
+                    artist = item.get("artistName", "")
+                    if not title:
+                        continue
 
-            try:
-                with self._get_client() as client:
-                    self._rate_limit()
-                    response = client.get(url, headers=self._get_headers())
-                    response.raise_for_status()
-                    soup = BeautifulSoup(response.text, "lxml")
+                    # 构建 Apple Music URL（去掉 ?uo=4 后缀）
+                    album_url = item.get("collectionViewUrl", "")
+                    album_url = re.sub(r"\?uo=\d+$", "", album_url)
 
-                    # Find product-lockup elements (album results)
-                    lockups = soup.select(".product-lockup, .top-search-lockup")
+                    # 提取发行日期
+                    release_date_raw = item.get("releaseDate", "")
+                    release_date = str(release_date_raw)[:10] if release_date_raw else ""
+                    year = None
+                    if release_date:
+                        year_match = re.match(r"(\d{4})", release_date)
+                        if year_match:
+                            year = int(year_match.group(1))
 
-                    for lockup in lockups:
-                        if len(results) >= limit:
-                            break
+                    # 提取封面 URL（替换为高分辨率）
+                    cover_url = item.get("artworkUrl100", "")
+                    if cover_url:
+                        cover_url = cover_url.replace("100x100bb", "600x600bb")
 
-                        # Find album link
-                        album_link = lockup.select_one('a[href*="/album/"]')
-                        if not album_link:
-                            continue
+                    # 提取流派
+                    genre = item.get("primaryGenreName", "")
+                    genre_list = [genre] if genre else []
 
-                        href = album_link.get("href", "")
-                        # Skip if no valid href
-                        if not href:
-                            continue
+                    # 从 copyright 中提取厂牌
+                    label = ""
+                    copyright_text = item.get("copyright", "")
+                    if copyright_text:
+                        label_match = re.search(
+                            r'[©℗]\s*\d{4}\s+(.+?)(?:\s+under\b|\s*$)',
+                            copyright_text
+                        )
+                        if label_match:
+                            label = label_match.group(1).strip().rstrip(",.")
 
-                        # Get aria-label for filtering and title extraction
-                        aria_label = album_link.get("aria-label", "")
+                    album = Album(
+                        title=title,
+                        artist=artist,
+                        year=year,
+                        release_date=release_date,
+                        genre=genre_list,
+                        label=label,
+                        cover_url=cover_url,
+                        source=self.name,
+                        source_id=collection_id,
+                        source_url=album_url,
+                        api_source="itunes_api",
+                    )
 
-                        # Only include albums (专辑/Album), skip individual tracks (歌曲/Song)
-                        # The aria-label format is "Title · Type · Artist"
-                        if "歌曲" in aria_label or "Song" in aria_label:
-                            # This is a track, skip unless it's also the album page
-                            if "?" in href:
-                                continue
+                    results.append(SearchResult(
+                        source=self.name,
+                        album=album,
+                        relevance=1.0,
+                    ))
 
-                        # Extract album URL - remove track query params
-                        if "?" in href and "/album/" in href:
-                            album_url_match = re.match(r"(https?://music\.apple\.com/[^/]+/album/[^?]+)", href)
-                            if album_url_match:
-                                href = album_url_match.group(1)
-                            elif href.startswith("/"):
-                                href = f"{self.base_url}{href.split('?')[0]}"
-                            else:
-                                href = href.split('?')[0]
-
-                        if href in seen_urls:
-                            continue
-                        seen_urls.add(href)
-
-                        # Extract title from aria-label
-                        title = aria_label
-                        if not title:
-                            # Find title in lockup
-                            for sel in [".product-lockup__title", ".lockup__title",
-                                       "[class*='title']", ".top-search-lockup__title"]:
-                                t = lockup.select_one(sel)
-                                if t and t.text.strip():
-                                    title = t.text.strip()
-                                    break
-
-                        if not title:
-                            continue
-
-                        # Normalize title for deduplication
-                        title_normalized = title.lower().strip()
-                        if title_normalized in seen_titles:
-                            continue
-                        seen_titles.add(title_normalized)
-
-                        # Clean up title - remove " · Type · Artist" suffix
-                        title = re.sub(r"\s*[·•  ]\s*(专辑|Album|单|歌曲|Song).*$", "", title)
-                        title = title.strip()
-
-                        if not title:
-                            continue
-
-                        album = self._parse_search_result(title, href)
-                        if album:
-                            results.append(SearchResult(
-                                source=self.name,
-                                album=album,
-                                relevance=1.0
-                            ))
-
-            except Exception as e:
-                print(f"Apple Music search failed for '{q}': {e}")
-                continue
+        except Exception as e:
+            print(f"Apple Music search failed: {e}")
 
         return results
 
@@ -172,33 +139,6 @@ class AppleMusicScraper(BaseScraper):
             print(f"Apple Music album fetch failed: {e}")
 
         return None
-
-    def _parse_search_result(self, title: str, href: str) -> Optional[Album]:
-        """解析搜索结果"""
-        try:
-            if not title:
-                return None
-
-            # Clean up title
-            title = title.strip()
-
-            # Extract album_id from URL
-            match = re.search(r"/album/[^/]+/(\d+)", href)
-            album_id = match.group(1) if match else href
-
-            album = Album(
-                title=title,
-                artist="",  # 搜索结果可能没有艺术家
-                source=self.name,
-                source_id=album_id,
-                source_url=href,
-                api_source="applemusic_page",
-            )
-
-            return album
-
-        except Exception:
-            return None
 
     def _parse_iso_duration(self, duration: str) -> str:
         """解析 ISO 8601 时长格式为 mm:ss 或 hh:mm:ss"""
@@ -308,7 +248,7 @@ class AppleMusicScraper(BaseScraper):
             # Try product meta section - 从 script 标签中提取完整日期
             for script in soup.select('script'):
                 script_text = script.string or ''
-                if 'Apple Music' in script_text or 'immanuel' in script_text.lower():
+                if 'Apple Music' in script_text:
                     # 提取完整日期: "2026年3月20日"
                     if not release_date:
                         date_match = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', script_text)
@@ -321,9 +261,7 @@ class AppleMusicScraper(BaseScraper):
                                 year = int(year_g)
 
                     # 提取风格信息 - 从 script 中查找
-                    # Apple Music 有时会包含 genre/style 信息
                     if not genre_list:
-                        # 尝试从页面文本中提取
                         genre_pattern = re.findall(r'"genre"\s*:\s*\[([^\]]+)\]', script_text)
                         for gp in genre_pattern:
                             genres = re.findall(r'"([^"]+)"', gp)
@@ -340,32 +278,34 @@ class AppleMusicScraper(BaseScraper):
                 elif "Label" in text or "厂牌" in text:
                     label = text.split(":")[-1].strip()
 
-            # 从所有 script 标签中提取厂牌信息
-            # Apple Music 在页面的 JSON 数据中包含厂牌，格式如:
-            # "2026年3月20日\n4 首歌曲、1 小时 2 分钟\nBlue Note Records; ℗ 2026 UMG Recordings, Inc."
+            # 从 script 标签中提取厂牌信息
+            # 页面 script 中包含 description 字段，格式如:
+            #   "2026年3月20日\n4 首歌曲\nBlue Note Records; ℗ 2026 UMG Recordings"
+            #   "2026年3月27日\n11 首歌曲\n℗ 2026 Cellar Live under exclusive license to ..."
+            #   "1985年3月7日\n1 首歌曲\n℗ 1985 USA for Africa"
             if not label:
                 for script in soup.select('script'):
                     script_text = script.string or ''
-                    if 'Apple Music' in script_text or 'immanuel' in script_text.lower():
-                        # 查找厂牌格式: "LabelName; © 年份" 或 "LabelName; ℗ 年份"
-                        match = re.search(
-                            r'([A-Za-z][A-Za-z0-9\s&\.\'-]+?)\s*;\s*[©℗]\s*\d{4}',
-                            script_text
-                        )
-                        if match:
-                            potential_label = match.group(1).strip()
-                            # 清理厂牌名称
-                            # 去除开头可能有的换行符
-                            potential_label = re.sub(r'^[\n\r]+', '', potential_label)
-                            # 如果以 n 开头且后面紧跟大写字母，去除 n
-                            if potential_label.startswith('n') and len(potential_label) > 1 and potential_label[1].isupper():
-                                potential_label = potential_label[1:]
-                            potential_label = potential_label.strip()
-                            # 过滤掉无效的匹配
-                            if (3 < len(potential_label) < 60 and
-                                not any(c in potential_label for c in ['@', '{', '}', 'http'])):
-                                label = potential_label
-                                break
+                    # 提取 description 字段中的版权行
+                    desc_match = re.search(
+                        r'"description"\s*:\s*"([^"]*[©℗][^"]*)"',
+                        script_text
+                    )
+                    if not desc_match:
+                        continue
+                    desc_text = desc_match.group(1).replace('\\n', '\n')
+
+                    # 格式1: "LabelName; ℗ YYYY ..." — 厂牌在分号前
+                    m = re.search(r'([A-Za-z][A-Za-z0-9\s&\.\'\-,]+?)\s*;\s*[©℗]', desc_text)
+                    if m:
+                        label = m.group(1).strip()
+                        break
+
+                    # 格式2: "℗ YYYY LabelName under ..." 或 "℗ YYYY LabelName"
+                    m = re.search(r'[©℗]\s*\d{4}\s+(.+?)(?:\s+under\b|$)', desc_text, re.MULTILINE)
+                    if m:
+                        label = m.group(1).strip().rstrip(",.")
+                        break
 
             # 获取封面
             cover_url = meta_tags.get("og:image", "")

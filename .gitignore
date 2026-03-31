@@ -33,17 +33,18 @@ env/
 *.swo
 *~
 
-# 项目数据（隐私）
-data/
-!data/.gitkeep
+# 项目数据（实际文件，忽略）
+data/albums/
+data/images/
+data/cookies/
+
+# 但保留目录结构和 .gitkeep
+!.gitkeep
+data/**/.gitkeep
 
 # 配置文件（包含隐私信息）
 config.yaml
 *.local.yaml
-
-# Cookies 和会话
-data/cookies/
-*.json
 
 # 调试文件
 *.html
