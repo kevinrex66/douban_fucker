@@ -249,6 +249,22 @@ class DiscogsScraper(BaseScraper):
             if not cover_url and images:
                 cover_url = images[0].get("uri", "")
 
+            # 从 formats 中提取介质和专辑类型
+            format_str = ""
+            album_type = ""
+            formats = data.get("formats", [])
+            if formats:
+                # format name 是介质类型 (如 "Vinyl", "CD")
+                format_str = formats[0].get("name", "")
+                # descriptions 包含专辑类型 (如 "Album", "EP", "Compilation")
+                descriptions = formats[0].get("descriptions", [])
+                type_keywords = {"Album", "EP", "Single", "Compilation", "Soundtrack",
+                                 "Live", "Remix", "Mixtape", "Mini-Album"}
+                for desc in descriptions:
+                    if desc in type_keywords:
+                        album_type = desc
+                        break
+
             album = Album(
                 title=data.get("title", ""),
                 artist=artist_str,
@@ -257,7 +273,8 @@ class DiscogsScraper(BaseScraper):
                 style=styles,
                 label=label_str,
                 catalog_number=catalog_str,
-                format=", ".join(data.get("formats", [])) if data.get("formats") else "",
+                format=format_str,
+                album_type=album_type,
                 country=data.get("country", ""),
                 tracklist=tracklist,
                 cover_url=cover_url,

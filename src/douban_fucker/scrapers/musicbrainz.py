@@ -143,7 +143,7 @@ class MusicBrainzScraper(BaseScraper):
 
             # 获取类型
             if data.get("primary-type"):
-                album.format = data.get("primary-type")
+                album.album_type = data.get("primary-type")
             if data.get("secondary-types"):
                 album.style = data.get("secondary-types", [])
 
@@ -185,6 +185,7 @@ class MusicBrainzScraper(BaseScraper):
             catalog_num = ""
             country = ""
             format_str = ""
+            album_type = release_group.get("primary-type", "")
 
             if release:
                 for label_info in release.get("label-info", []):
@@ -193,12 +194,14 @@ class MusicBrainzScraper(BaseScraper):
                     break
 
                 country = release.get("country", "")
-                # 获取 format
+                # 获取 format (介质类型)
                 media = release.get("media", [])
                 if media and media[0].get("format"):
                     format_str = media[0].get("format", "")
-                if not format_str:
-                    format_str = release.get("release-group", {}).get("primary-type", "")
+
+            # 如果没有从 release 获取到 album_type，从嵌套的 release-group 获取
+            if not album_type and release:
+                album_type = release.get("release-group", {}).get("primary-type", "")
 
             # 获取曲目
             tracklist = self._get_tracklist(release_group.get("id", ""))
@@ -230,6 +233,7 @@ class MusicBrainzScraper(BaseScraper):
                 label=label,
                 catalog_number=catalog_num,
                 format=format_str,
+                album_type=album_type,
                 country=country,
                 tracklist=tracklist,
                 cover_url=cover_url,
@@ -380,8 +384,13 @@ class MusicBrainzScraper(BaseScraper):
         return self._search_wikipedia_by_lang(title, artist, search_query, "en")
 
     def _search_wikipedia_by_lang(self, title: str, artist: str, search_query: str, lang: str) -> str:
-        """在指定语言的 Wikipedia 中搜索"""
+        """在指定语言的 Wikipedia 中搜索，必须同时匹配专辑名和艺术家名"""
         import urllib.parse
+        import re
+
+        # 清理标题和艺术家名用于匹配
+        clean_title = re.sub(r'\s*\([^)]*\)|\s*\[[^\]]*\]', '', title).strip().lower()
+        clean_artist = re.sub(r'\s*\([^)]*\)|\s*\[[^\]]*\]', '', artist).strip().lower()
 
         try:
             encoded_query = urllib.parse.quote(search_query)
@@ -394,24 +403,32 @@ class MusicBrainzScraper(BaseScraper):
                     data = response.json()
                     search_results = data.get("query", {}).get("search", [])
 
-                    # 找到最匹配的结果
+                    # 遍历搜索结果，找到同时匹配专辑名和艺术家名的
                     for result in search_results:
                         result_title = result.get("title", "")
                         result_lower = result_title.lower()
 
+                        # 清理搜索结果标题用于匹配
+                        clean_result = re.sub(r'\s*\([^)]*\)|\s*\[[^\]]*\]', '', result_title).strip().lower()
+
                         # 中文 Wikipedia：检查是否包含"专辑"关键词
                         if lang == "zh":
                             if "专辑" in result_title or "專輯" in result_title:
-                                # 获取摘要
-                                page_title = result_title.replace(" ", "_")
-                                summary = self._get_wikipedia_summary_by_title(page_title, lang)
-                                if summary:
-                                    return summary
+                                # 必须同时匹配专辑名和艺术家名
+                                title_match = clean_title in clean_result or clean_result in clean_title
+                                artist_match = clean_artist in result_lower or clean_artist in clean_result
+
+                                if title_match and artist_match:
+                                    page_title = result_title.replace(" ", "_")
+                                    summary = self._get_wikipedia_summary_by_title(page_title, lang)
+                                    if summary:
+                                        return summary
                         else:
-                            # 英文 Wikipedia：检查标题是否包含专辑名或艺术家
-                            title_lower = title.lower()
-                            artist_lower = artist.lower()
-                            if title_lower in result_lower or artist_lower in result_lower:
+                            # 英文 Wikipedia：必须同时匹配专辑名和艺术家名
+                            title_match = clean_title in clean_result or clean_result in clean_title
+                            artist_match = clean_artist in result_lower or clean_artist in clean_result
+
+                            if title_match and artist_match:
                                 page_title = result_title.replace(" ", "_")
                                 summary = self._get_wikipedia_summary_by_title(page_title, lang)
                                 if summary:

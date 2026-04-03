@@ -47,6 +47,7 @@ class Album(BaseModel):
 
     # 格式
     format: str = ""  # CD, Vinyl, Digital, etc.
+    album_type: str = ""  # Album, EP, Single, Compilation, etc.
     country: str = ""  # 发行国家
 
     # 曲目信息

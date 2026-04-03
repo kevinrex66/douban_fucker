@@ -10,6 +10,173 @@ from ..models import Album
 from ..utils import get_config
 from .session import SessionManager
 
+# 英文流派 -> 豆瓣流派下拉框选项 映射表
+# 豆瓣实际下拉选项 (14个):
+#   Blues 布鲁斯, Classical 古典, Easy Listening 轻音乐, Electronic 电子,
+#   Folk 民谣, Funk/Soul/R&B 放克/灵魂/R&B, Jazz 爵士, Latin 拉丁,
+#   Pop 流行, Rap 说唱, Reggae 雷鬼, Rock 摇滚, Soundtrack 原声, World 世界音乐
+# 映射值使用英文部分，_select_from_dropdown 会用子串匹配找到对应选项
+GENRE_TO_DOUBAN = {
+    # === 大分类直接映射 ===
+    "blues": "Blues",
+    "classical": "Classical",
+    "easy listening": "Easy Listening",
+    "electronic": "Electronic",
+    "folk": "Folk",
+    "funk / soul": "Funk/Soul/R&B",
+    "funk/soul": "Funk/Soul/R&B",
+    "funk": "Funk/Soul/R&B",
+    "soul": "Funk/Soul/R&B",
+    "r&b": "Funk/Soul/R&B",
+    "rhythm & blues": "Funk/Soul/R&B",
+    "jazz": "Jazz",
+    "latin": "Latin",
+    "pop": "Pop",
+    "rap": "Rap",
+    "hip hop": "Rap",
+    "hip-hop": "Rap",
+    "reggae": "Reggae",
+    "rock": "Rock",
+    "soundtrack": "Soundtrack",
+    "stage & screen": "Soundtrack",
+    "world": "World",
+    "world music": "World",
+    # === Discogs 大分类 ===
+    "folk, world, & country": "Folk",
+    "non-music": "Electronic",
+    "children's": "Pop",
+    "brass & military": "Classical",
+    # === Rock 子分类 ===
+    "indie rock": "Rock",
+    "alternative rock": "Rock",
+    "post-rock": "Rock",
+    "progressive rock": "Rock",
+    "psychedelic rock": "Rock",
+    "garage rock": "Rock",
+    "hard rock": "Rock",
+    "grunge": "Rock",
+    "shoegaze": "Rock",
+    "noise rock": "Rock",
+    "post-punk": "Rock",
+    "punk rock": "Rock",
+    "punk": "Rock",
+    "hardcore punk": "Rock",
+    "new wave": "Rock",
+    "folk rock": "Rock",
+    # === Metal -> Rock (豆瓣无独立金属分类) ===
+    "metal": "Rock",
+    "heavy metal": "Rock",
+    "death metal": "Rock",
+    "black metal": "Rock",
+    "thrash metal": "Rock",
+    "doom metal": "Rock",
+    # === Pop 子分类 ===
+    "indie pop": "Pop",
+    "synth-pop": "Pop",
+    "dream pop": "Pop",
+    "art pop": "Pop",
+    "k-pop": "Pop",
+    "j-pop": "Pop",
+    "disco": "Pop",
+    "chanson": "Pop",
+    # === Electronic 子分类 ===
+    "dance": "Electronic",
+    "techno": "Electronic",
+    "house": "Electronic",
+    "ambient": "Electronic",
+    "drum and bass": "Electronic",
+    "dubstep": "Electronic",
+    "idm": "Electronic",
+    "trip hop": "Electronic",
+    "downtempo": "Electronic",
+    "trance": "Electronic",
+    "edm": "Electronic",
+    "industrial": "Electronic",
+    "noise": "Electronic",
+    "experimental": "Electronic",
+    "avant-garde": "Electronic",
+    # === Jazz 子分类 ===
+    "bossa nova": "Jazz",
+    "bebop": "Jazz",
+    "swing": "Jazz",
+    "free jazz": "Jazz",
+    "cool jazz": "Jazz",
+    "hard bop": "Jazz",
+    "post-bop": "Jazz",
+    "fusion": "Jazz",
+    "smooth jazz": "Jazz",
+    "acid jazz": "Jazz",
+    "avant-garde jazz": "Jazz",
+    "vocal jazz": "Jazz",
+    "contemporary jazz": "Jazz",
+    "big band": "Jazz",
+    "dixieland": "Jazz",
+    "modal jazz": "Jazz",
+    "soul jazz": "Jazz",
+    "spiritual jazz": "Jazz",
+    # === Classical 子分类 ===
+    "opera": "Classical",
+    "baroque": "Classical",
+    "romantic": "Classical",
+    "modern classical": "Classical",
+    "contemporary classical": "Classical",
+    "chamber music": "Classical",
+    "symphony": "Classical",
+    "choral": "Classical",
+    # === Folk 子分类 ===
+    "singer-songwriter": "Folk",
+    "americana": "Folk",
+    "acoustic": "Folk",
+    "country": "Folk",
+    "bluegrass": "Folk",
+    "new age": "Easy Listening",
+    "spoken word": "Easy Listening",
+    # === Funk/Soul/R&B 子分类 ===
+    "gospel": "Funk/Soul/R&B",
+    "neo soul": "Funk/Soul/R&B",
+    "motown": "Funk/Soul/R&B",
+    # === Reggae 子分类 ===
+    "ska": "Reggae",
+    "dub": "Reggae",
+    "dancehall": "Reggae",
+    # === Latin 子分类 ===
+    "flamenco": "Latin",
+    "samba": "Latin",
+    "salsa": "Latin",
+    "tango": "Latin",
+    # === World 子分类 ===
+    "afrobeat": "World",
+    "african": "World",
+    "celtic": "World",
+    # === Blues 子分类 ===
+    "rhythm and blues": "Blues",
+    "delta blues": "Blues",
+    "chicago blues": "Blues",
+    "electric blues": "Blues",
+}
+
+# 专辑类型 -> 豆瓣专辑类型 映射表
+# 豆瓣专辑类型选项: 专辑, 单曲, EP, 精选集, 合集, 现场专辑, 原声带, 混音
+ALBUM_TYPE_TO_DOUBAN = {
+    "album": "专辑",
+    "single": "单曲",
+    "ep": "EP",
+    "compilation": "精选集",
+    "soundtrack": "原声带",
+    "live": "现场专辑",
+    "remix": "混音",
+    "mixtape": "合集",
+    "mixtape/street": "合集",
+    "dj-mix": "混音",
+    "broadcast": "专辑",
+    "mini-album": "EP",
+    "demo": "专辑",
+    "interview": "专辑",
+    "spokenword": "专辑",
+    "audiobook": "专辑",
+    "audio drama": "专辑",
+}
+
 
 class DoubanBrowser:
     """豆瓣浏览器操作类"""
@@ -258,11 +425,25 @@ class DoubanBrowser:
                 format_value = format_map.get(album.format.lower(), album.format)
                 self._select_from_dropdown("p_49", format_value)
 
-            # 流派 (p_116)
-            if album.genre:
-                genre = album.genre[0] if album.genre else ""
-                if genre:
-                    self._select_from_dropdown("p_116", genre)
+            # ========== 诊断: 打印下拉框 DOM 结构 ==========
+            self._dump_dropdown_html(["p_116", "p_57", "p_49"])
+            # ========== 诊断结束 ==========
+
+            # 流派 (p_116) - 映射英文流派到豆瓣中文
+            douban_genre = self._map_genre_to_douban(album.genre)
+            if douban_genre:
+                if self._select_from_dropdown("p_116", douban_genre):
+                    print(f"选择流派: {douban_genre}")
+                else:
+                    print(f"流派下拉选择失败: {douban_genre}")
+
+            # 专辑类型 (p_57) - 映射到豆瓣类型
+            douban_type = self._map_album_type_to_douban(album)
+            if douban_type:
+                if self._select_from_dropdown("p_57", douban_type):
+                    print(f"选择专辑类型: {douban_type}")
+                else:
+                    print(f"专辑类型下拉选择失败: {douban_type}")
 
             # 曲目列表 (p_52_other - textarea)
             if album.tracklist:
@@ -633,11 +814,15 @@ class DoubanBrowser:
                 format_value = format_map.get(album.format.lower(), album.format)
                 self._select_from_dropdown("p_49", format_value)
 
-            # 流派 (p_116)
-            if album.genre:
-                genre = album.genre[0] if album.genre else ""
-                if genre:
-                    self._select_from_dropdown("p_116", genre)
+            # 流派 (p_116) - 映射英文流派到豆瓣中文
+            douban_genre = self._map_genre_to_douban(album.genre)
+            if douban_genre:
+                self._select_from_dropdown("p_116", douban_genre)
+
+            # 专辑类型 (p_57) - 映射到豆瓣类型
+            douban_type = self._map_album_type_to_douban(album)
+            if douban_type:
+                self._select_from_dropdown("p_57", douban_type)
 
             # 曲目列表 (p_52_other - textarea)
             if album.tracklist:
@@ -666,33 +851,231 @@ class DoubanBrowser:
             print(f"填写表单时出错: {e}")
 
     def _select_from_dropdown(self, field_id: str, value: str) -> bool:
-        """从下拉框选择值"""
+        """从豆瓣自定义下拉框选择值
+
+        豆瓣的下拉框有多种实现方式，依次尝试：
+        1. 原生 <select> 元素
+        2. 自定义下拉组件 (点击触发器 -> 选择选项)
+        3. 通过 JavaScript 直接设置值
+        """
         try:
-            # 点击下拉框触发选择
-            dropdown = self.page.query_selector(f"[data-id='{field_id}']")
-            if dropdown:
-                dropdown.click()
+            # 方法1: 原生 <select> 元素
+            select_elem = self.page.query_selector(f"select#{field_id}")
+            if not select_elem:
+                select_elem = self.page.query_selector(f"select[name='{field_id}']")
+            if select_elem:
+                # 尝试用 select_option 直接选择（按 label 文本匹配）
+                try:
+                    select_elem.select_option(label=value)
+                    time.sleep(0.3)
+                    print(f"  [select] {field_id} -> {value}")
+                    return True
+                except Exception:
+                    pass
+                # 尝试按 value 匹配
+                try:
+                    select_elem.select_option(value=value)
+                    time.sleep(0.3)
+                    print(f"  [select/val] {field_id} -> {value}")
+                    return True
+                except Exception:
+                    pass
+
+            # 方法2: 自定义下拉组件 - 尝试多种触发器选择器
+            trigger_selectors = [
+                f"[data-id='{field_id}']",
+                f"#{field_id}_inputor",
+                f"#{field_id}_container",
+                f".{field_id}-trigger",
+                f"[id*='{field_id}'] .selectr-selected",
+                f"[id*='{field_id}'] .select-trigger",
+            ]
+
+            trigger = None
+            for selector in trigger_selectors:
+                trigger = self.page.query_selector(selector)
+                if trigger:
+                    break
+
+            # 如果没有找到专用触发器，尝试查找 field_id 相关的可点击区域
+            if not trigger:
+                # 查找包含 field_id 的容器内的可点击元素
+                trigger = self.page.query_selector(
+                    f"[id*='{field_id}'] span, [id*='{field_id}'] div.select"
+                )
+
+            if trigger:
+                trigger.click()
                 time.sleep(0.5)
 
-            # 查找包含值的选项并点击
-            option = self.page.query_selector(f"li[data-val='{value}']")
-            if not option:
-                # 尝试模糊匹配
-                options = self.page.query_selector_all("ul[class*='dropdown'] li")
-                for opt in options:
-                    opt_text = opt.text_content() or ""
-                    if value.lower() in opt_text.lower():
-                        option = opt
-                        break
+                # 在打开的下拉列表中查找匹配选项
+                option = self._find_dropdown_option(value)
+                if option:
+                    option.click()
+                    time.sleep(0.3)
+                    print(f"  [dropdown] {field_id} -> {value}")
+                    return True
 
-            if option:
-                option.click()
+            # 方法3: 使用 JavaScript 查找并点击
+            # 通过 JS 在页面中搜索包含 field_id 的下拉组件并模拟选择
+            js_result = self.page.evaluate("""(args) => {
+                const [fieldId, value] = args;
+
+                // 尝试1: 查找 select 元素
+                let sel = document.querySelector(`select#${fieldId}`) ||
+                          document.querySelector(`select[name="${fieldId}"]`);
+                if (sel) {
+                    for (let opt of sel.options) {
+                        if (opt.text.includes(value) || opt.value.includes(value)) {
+                            sel.value = opt.value;
+                            sel.dispatchEvent(new Event('change', { bubbles: true }));
+                            return 'select:' + opt.text;
+                        }
+                    }
+                }
+
+                // 尝试2: 查找自定义下拉组件
+                // 先点击触发器
+                let triggers = document.querySelectorAll(
+                    `[data-id="${fieldId}"], #${fieldId}_inputor, [class*="${fieldId}"]`
+                );
+                for (let trig of triggers) {
+                    trig.click();
+                }
+
+                // 等一下，然后查找所有可见的下拉选项
+                let allLi = document.querySelectorAll('li');
+                for (let li of allLi) {
+                    let text = li.textContent.trim();
+                    let style = window.getComputedStyle(li);
+                    let parentStyle = li.parentElement ?
+                        window.getComputedStyle(li.parentElement) : null;
+                    let isVisible = style.display !== 'none' &&
+                        (!parentStyle || parentStyle.display !== 'none');
+
+                    if (isVisible && text === value) {
+                        li.click();
+                        return 'li:' + text;
+                    }
+                }
+
+                // 尝试3: 模糊文本匹配
+                for (let li of allLi) {
+                    let text = li.textContent.trim();
+                    let style = window.getComputedStyle(li);
+                    let parentStyle = li.parentElement ?
+                        window.getComputedStyle(li.parentElement) : null;
+                    let isVisible = style.display !== 'none' &&
+                        (!parentStyle || parentStyle.display !== 'none');
+
+                    if (isVisible && text.includes(value)) {
+                        li.click();
+                        return 'li_fuzzy:' + text;
+                    }
+                }
+
+                return null;
+            }""", [field_id, value])
+
+            if js_result:
                 time.sleep(0.3)
+                print(f"  [js] {field_id} -> {value} ({js_result})")
                 return True
 
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  下拉框选择出错 ({field_id}): {e}")
         return False
+
+    def _find_dropdown_option(self, value: str) -> object:
+        """在当前打开的下拉列表中查找匹配选项"""
+        # 精确匹配
+        option_selectors = [
+            f"li[data-val='{value}']",
+            f"li[data-value='{value}']",
+            f"option[value='{value}']",
+        ]
+        for selector in option_selectors:
+            option = self.page.query_selector(selector)
+            if option:
+                return option
+
+        # 文本匹配 - 查找所有可见的 li 元素
+        visible_lists = self.page.query_selector_all(
+            "ul:not([style*='display: none']):not([style*='display:none']) li, "
+            "ul.dropdown li, ul[class*='drop'] li, ul[class*='select'] li, "
+            ".dropdown-menu li, .select-options li"
+        )
+        for opt in visible_lists:
+            opt_text = (opt.text_content() or "").strip()
+            if opt_text == value:
+                return opt
+
+        # 模糊匹配
+        for opt in visible_lists:
+            opt_text = (opt.text_content() or "").strip()
+            if value in opt_text or opt_text in value:
+                return opt
+
+        return None
+
+    def _map_genre_to_douban(self, genres: list) -> str:
+        """将英文流派列表映射到豆瓣流派名称"""
+        if not genres:
+            return ""
+
+        for genre in genres:
+            genre_lower = genre.lower().strip()
+            # 精确匹配
+            if genre_lower in GENRE_TO_DOUBAN:
+                return GENRE_TO_DOUBAN[genre_lower]
+
+        # 如果没有精确匹配，尝试子字符串匹配
+        for genre in genres:
+            genre_lower = genre.lower().strip()
+            for key, douban_val in GENRE_TO_DOUBAN.items():
+                if key in genre_lower or genre_lower in key:
+                    return douban_val
+
+        # 如果流派已经是中文（可能来自其他源），尝试反查映射
+        # 豆瓣下拉选项的中文部分
+        chinese_to_douban = {
+            "布鲁斯": "Blues", "蓝调": "Blues", "古典": "Classical",
+            "轻音乐": "Easy Listening", "电子": "Electronic", "民谣": "Folk",
+            "放克": "Funk/Soul/R&B", "灵魂": "Funk/Soul/R&B", "灵魂乐": "Funk/Soul/R&B",
+            "爵士": "Jazz", "爵士乐": "Jazz", "拉丁": "Latin",
+            "流行": "Pop", "说唱": "Rap", "嘻哈": "Rap",
+            "雷鬼": "Reggae", "摇滚": "Rock",
+            "原声": "Soundtrack", "原声带": "Soundtrack",
+            "世界音乐": "World",
+        }
+        for genre in genres:
+            if genre in chinese_to_douban:
+                return chinese_to_douban[genre]
+
+        print(f"  未找到流派映射: {genres}")
+        return ""
+
+    def _map_album_type_to_douban(self, album: Album) -> str:
+        """将专辑类型映射到豆瓣专辑类型"""
+        # 优先使用 album_type 字段
+        if album.album_type:
+            type_lower = album.album_type.lower().strip()
+            if type_lower in ALBUM_TYPE_TO_DOUBAN:
+                return ALBUM_TYPE_TO_DOUBAN[type_lower]
+
+        # 从 style (MusicBrainz secondary-types) 中提取
+        if album.style:
+            for s in album.style:
+                s_lower = s.lower().strip()
+                if s_lower in ALBUM_TYPE_TO_DOUBAN:
+                    return ALBUM_TYPE_TO_DOUBAN[s_lower]
+
+        # 默认返回 "专辑"（如果有 album_type 但未匹配）
+        if album.album_type:
+            print(f"  未找到专辑类型映射: {album.album_type}, 默认使用 '专辑'")
+            return "专辑"
+
+        return ""
 
     def get_page(self) -> Optional[Page]:
         """获取当前页面（用于手动操作）"""

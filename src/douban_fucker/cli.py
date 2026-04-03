@@ -220,6 +220,10 @@ def supplement_album(album: Album, primary_source: str = None) -> Album:
 
                     if not album.format and mb_album.format:
                         album.format = mb_album.format
+
+                    if not album.album_type and mb_album.album_type:
+                        album.album_type = mb_album.album_type
+                        console.print(f"[green]补充专辑类型: {album.album_type}[/green]")
         except Exception as e:
             console.print(f"[dim]MusicBrainz 补充失败: {e}[/dim]")
 
