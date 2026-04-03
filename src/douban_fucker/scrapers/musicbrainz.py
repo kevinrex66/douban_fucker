@@ -217,12 +217,13 @@ class MusicBrainzScraper(BaseScraper):
             description = ""
             wiki_url = self._get_wikipedia_url(release_group)
             if wiki_url:
-                description = self._get_wikipedia_summary(wiki_url)
+                description = self._get_wikipedia_summary(wiki_url, album_year)
 
             # 如果通过关系没找到，尝试直接用标题搜索 Wikipedia
             album_title = release_group.get("title", "")
+            album_year = int(release_group.get("first-release-date", "0000")[:4]) if release_group.get("first-release-date") else None
             if not description and album_title and artist_str:
-                description = self._search_wikipedia_by_title(album_title, artist_str)
+                description = self._search_wikipedia_by_title(album_title, artist_str, album_year)
 
             album = Album(
                 title=release_group.get("title", ""),
@@ -368,23 +369,23 @@ class MusicBrainzScraper(BaseScraper):
 
         return None
 
-    def _search_wikipedia_by_title(self, title: str, artist: str) -> str:
+    def _search_wikipedia_by_title(self, title: str, artist: str, year: int = None) -> str:
         """通过专辑标题和艺术家搜索 Wikipedia，优先中文"""
         import re
         import urllib.parse
 
         # 先尝试中文 Wikipedia
         search_query = f"{title} {artist} 专辑"
-        zh_summary = self._search_wikipedia_by_lang(title, artist, search_query, "zh")
+        zh_summary = self._search_wikipedia_by_lang(title, artist, search_query, "zh", year)
         if zh_summary:
             return zh_summary
 
         # 中文没有则尝试英文
         search_query = f"{title} {artist} album"
-        return self._search_wikipedia_by_lang(title, artist, search_query, "en")
+        return self._search_wikipedia_by_lang(title, artist, search_query, "en", year)
 
-    def _search_wikipedia_by_lang(self, title: str, artist: str, search_query: str, lang: str) -> str:
-        """在指定语言的 Wikipedia 中搜索，必须同时匹配专辑名和艺术家名"""
+    def _search_wikipedia_by_lang(self, title: str, artist: str, search_query: str, lang: str, year: int = None) -> str:
+        """在指定语言的 Wikipedia 中搜索，必须同时匹配专辑名、艺术家名，并通过年份验证"""
         import urllib.parse
         import re
 
@@ -421,6 +422,9 @@ class MusicBrainzScraper(BaseScraper):
                                 if title_match and artist_match:
                                     page_title = result_title.replace(" ", "_")
                                     summary = self._get_wikipedia_summary_by_title(page_title, lang)
+                                    # 必须验证年份
+                                    if summary and year and not self._validate_year_in_summary(summary, year, lang):
+                                        continue
                                     if summary:
                                         return summary
                         else:
@@ -431,6 +435,9 @@ class MusicBrainzScraper(BaseScraper):
                             if title_match and artist_match:
                                 page_title = result_title.replace(" ", "_")
                                 summary = self._get_wikipedia_summary_by_title(page_title, lang)
+                                # 必须验证年份
+                                if summary and year and not self._validate_year_in_summary(summary, year, lang):
+                                    continue
                                 if summary:
                                     return summary
 
@@ -438,6 +445,25 @@ class MusicBrainzScraper(BaseScraper):
             pass
 
         return ""
+
+    def _validate_year_in_summary(self, summary: str, year: int, lang: str) -> bool:
+        """验证简介中是否包含目标年份"""
+        import re
+
+        year_str = str(year)
+
+        # 各种年份格式
+        patterns = [
+            rf'{year_str}[年/-]',  # 2024年, 2024-, 2024/
+            rf'[/-]{year_str}',  # /2024, -2024
+            rf'\b{year_str}\b',  # 独立年份
+        ]
+
+        for pattern in patterns:
+            if re.search(pattern, summary):
+                return True
+
+        return False
 
     def _get_wikipedia_summary_by_title(self, page_title: str, lang: str = "en") -> str:
         """通过 Wikipedia 页面标题获取摘要"""
@@ -459,7 +485,7 @@ class MusicBrainzScraper(BaseScraper):
 
         return ""
 
-    def _get_wikipedia_summary(self, wiki_url: str) -> str:
+    def _get_wikipedia_summary(self, wiki_url: str, year: int = None) -> str:
         """从 Wikipedia URL 获取简介"""
         import re
 
@@ -485,6 +511,9 @@ class MusicBrainzScraper(BaseScraper):
                     data = response.json()
                     # 获取 extract 字段作为简介
                     extract = data.get("extract", "")
+                    # 如果提供了年份，必须验证
+                    if extract and year and not self._validate_year_in_summary(extract, year, lang):
+                        return ""
                     if extract:
                         return extract
         except Exception:

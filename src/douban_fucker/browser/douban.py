@@ -850,173 +850,177 @@ class DoubanBrowser:
         except Exception as e:
             print(f"填写表单时出错: {e}")
 
-    def _select_from_dropdown(self, field_id: str, value: str) -> bool:
-        """从豆瓣自定义下拉框选择值
+    def _dump_dropdown_html(self, field_ids: list) -> None:
+        """诊断: 打印下拉框相关元素的 HTML 结构"""
+        print("\n" + "=" * 60)
+        print(">>> 下拉框 DOM 诊断 <<<")
+        print("=" * 60)
+        for field_id in field_ids:
+            html = self.page.evaluate("""(fieldId) => {
+                const results = [];
 
-        豆瓣的下拉框有多种实现方式，依次尝试：
-        1. 原生 <select> 元素
-        2. 自定义下拉组件 (点击触发器 -> 选择选项)
-        3. 通过 JavaScript 直接设置值
-        """
-        try:
-            # 方法1: 原生 <select> 元素
-            select_elem = self.page.query_selector(f"select#{field_id}")
-            if not select_elem:
-                select_elem = self.page.query_selector(f"select[name='{field_id}']")
-            if select_elem:
-                # 尝试用 select_option 直接选择（按 label 文本匹配）
-                try:
-                    select_elem.select_option(label=value)
-                    time.sleep(0.3)
-                    print(f"  [select] {field_id} -> {value}")
-                    return True
-                except Exception:
-                    pass
-                # 尝试按 value 匹配
-                try:
-                    select_elem.select_option(value=value)
-                    time.sleep(0.3)
-                    print(f"  [select/val] {field_id} -> {value}")
-                    return True
-                except Exception:
-                    pass
-
-            # 方法2: 自定义下拉组件 - 尝试多种触发器选择器
-            trigger_selectors = [
-                f"[data-id='{field_id}']",
-                f"#{field_id}_inputor",
-                f"#{field_id}_container",
-                f".{field_id}-trigger",
-                f"[id*='{field_id}'] .selectr-selected",
-                f"[id*='{field_id}'] .select-trigger",
-            ]
-
-            trigger = None
-            for selector in trigger_selectors:
-                trigger = self.page.query_selector(selector)
-                if trigger:
-                    break
-
-            # 如果没有找到专用触发器，尝试查找 field_id 相关的可点击区域
-            if not trigger:
-                # 查找包含 field_id 的容器内的可点击元素
-                trigger = self.page.query_selector(
-                    f"[id*='{field_id}'] span, [id*='{field_id}'] div.select"
-                )
-
-            if trigger:
-                trigger.click()
-                time.sleep(0.5)
-
-                # 在打开的下拉列表中查找匹配选项
-                option = self._find_dropdown_option(value)
-                if option:
-                    option.click()
-                    time.sleep(0.3)
-                    print(f"  [dropdown] {field_id} -> {value}")
-                    return True
-
-            # 方法3: 使用 JavaScript 查找并点击
-            # 通过 JS 在页面中搜索包含 field_id 的下拉组件并模拟选择
-            js_result = self.page.evaluate("""(args) => {
-                const [fieldId, value] = args;
-
-                // 尝试1: 查找 select 元素
-                let sel = document.querySelector(`select#${fieldId}`) ||
-                          document.querySelector(`select[name="${fieldId}"]`);
-                if (sel) {
-                    for (let opt of sel.options) {
-                        if (opt.text.includes(value) || opt.value.includes(value)) {
-                            sel.value = opt.value;
-                            sel.dispatchEvent(new Event('change', { bubbles: true }));
-                            return 'select:' + opt.text;
+                // 1. 查找 id 完全匹配的元素
+                const exact = document.getElementById(fieldId);
+                if (exact) {
+                    results.push(`[#${fieldId}] tag=${exact.tagName} type=${exact.type||''} outerHTML=${exact.outerHTML.substring(0, 300)}`);
+                    // 如果是 select，列出所有 option
+                    if (exact.tagName === 'SELECT') {
+                        for (let opt of exact.options) {
+                            results.push(`  option: value="${opt.value}" text="${opt.text}"`);
                         }
                     }
                 }
 
-                // 尝试2: 查找自定义下拉组件
-                // 先点击触发器
-                let triggers = document.querySelectorAll(
-                    `[data-id="${fieldId}"], #${fieldId}_inputor, [class*="${fieldId}"]`
-                );
-                for (let trig of triggers) {
-                    trig.click();
-                }
-
-                // 等一下，然后查找所有可见的下拉选项
-                let allLi = document.querySelectorAll('li');
-                for (let li of allLi) {
-                    let text = li.textContent.trim();
-                    let style = window.getComputedStyle(li);
-                    let parentStyle = li.parentElement ?
-                        window.getComputedStyle(li.parentElement) : null;
-                    let isVisible = style.display !== 'none' &&
-                        (!parentStyle || parentStyle.display !== 'none');
-
-                    if (isVisible && text === value) {
-                        li.click();
-                        return 'li:' + text;
+                // 2. 查找 id 包含 fieldId 的所有元素
+                const partials = document.querySelectorAll(`[id*="${fieldId}"]`);
+                for (let el of partials) {
+                    if (el.id !== fieldId) {
+                        results.push(`[id*=${fieldId}] id=${el.id} tag=${el.tagName} class=${el.className} outerHTML=${el.outerHTML.substring(0, 200)}`);
                     }
                 }
 
-                // 尝试3: 模糊文本匹配
-                for (let li of allLi) {
-                    let text = li.textContent.trim();
-                    let style = window.getComputedStyle(li);
-                    let parentStyle = li.parentElement ?
-                        window.getComputedStyle(li.parentElement) : null;
-                    let isVisible = style.display !== 'none' &&
-                        (!parentStyle || parentStyle.display !== 'none');
+                // 3. 查找 name 包含 fieldId 的元素
+                const byName = document.querySelectorAll(`[name*="${fieldId}"]`);
+                for (let el of byName) {
+                    results.push(`[name*=${fieldId}] name=${el.name} tag=${el.tagName} type=${el.type||''} outerHTML=${el.outerHTML.substring(0, 200)}`);
+                }
 
-                    if (isVisible && text.includes(value)) {
-                        li.click();
-                        return 'li_fuzzy:' + text;
+                // 4. 查找 data-id 匹配的元素
+                const byDataId = document.querySelectorAll(`[data-id="${fieldId}"]`);
+                for (let el of byDataId) {
+                    results.push(`[data-id=${fieldId}] tag=${el.tagName} class=${el.className} outerHTML=${el.outerHTML.substring(0, 200)}`);
+                }
+
+                // 5. 查找父容器（如果有 label）
+                const labels = document.querySelectorAll('label');
+                for (let label of labels) {
+                    const forAttr = label.getAttribute('for');
+                    if (forAttr && forAttr.includes(fieldId)) {
+                        results.push(`[label for=${forAttr}] text="${label.textContent.trim()}" outerHTML=${label.outerHTML.substring(0, 200)}`);
+                        // 看看 label 的兄弟/父元素
+                        const parent = label.parentElement;
+                        if (parent) {
+                            results.push(`  parent: tag=${parent.tagName} class=${parent.className} innerHTML前200=${parent.innerHTML.substring(0, 200)}`);
+                        }
                     }
                 }
 
+                return results.length > 0 ? results : ['未找到任何匹配元素'];
+            }""", field_id)
+            print(f"\n--- {field_id} ---")
+            for line in html:
+                print(f"  {line}")
+        print("=" * 60 + "\n")
+
+    def _select_from_dropdown(self, field_id: str, value: str) -> bool:
+        """从豆瓣自定义下拉框选择值
+
+        豆瓣下拉框 DOM 结构:
+          div.item.dropdown.single
+            label[for=field_id]    -- 字段标签
+            div.opts-group
+              div.selector.single
+                label.selected     -- 触发器，显示当前选中值（如"请选择"）
+                input[type=hidden][name=field_id]  -- 存储实际值
+              ul (展开后出现)
+                li                 -- 各选项
+        """
+        try:
+            # 1. 通过 JS 拿到触发器的 ElementHandle（Playwright 对象）
+            trigger = self.page.evaluate_handle("""(fieldId) => {
+                const input = document.querySelector(`input[name="${fieldId}"]`);
+                if (!input) return null;
+                const container = input.closest('.dropdown');
+                if (container) return container.querySelector('label.selected');
+                const selector = input.closest('.selector');
+                if (selector) return selector.querySelector('label.selected');
                 return null;
-            }""", [field_id, value])
+            }""", field_id).as_element()
 
-            if js_result:
+            if not trigger:
+                print(f"  [{field_id}] 未找到下拉触发器")
+                return False
+
+            # 2. 用 Playwright 点击触发器展开下拉
+            trigger.click()
+            time.sleep(0.8)
+
+            # 3. 通过 JS 找到容器内的所有 li，返回文本列表用于匹配
+            options_info = self.page.evaluate("""(fieldId) => {
+                const input = document.querySelector(`input[name="${fieldId}"]`);
+                if (!input) return [];
+                const container = input.closest('.dropdown');
+                if (!container) return [];
+                const items = container.querySelectorAll('li');
+                return Array.from(items).map((li, i) => ({
+                    index: i,
+                    text: li.textContent.trim()
+                }));
+            }""", field_id)
+
+            if not options_info:
+                print(f"  [{field_id}] 下拉展开后未找到 li 选项")
+                return False
+
+            # 4. 在返回的选项列表中找匹配项
+            match_index = None
+            match_text = ""
+            value_lower = value.lower()
+
+            # 精确匹配
+            for opt in options_info:
+                if opt["text"] == value:
+                    match_index = opt["index"]
+                    match_text = opt["text"]
+                    break
+
+            # 子串匹配: 选项文本包含 value（如 "Jazz 爵士" 包含 "Jazz"）
+            if match_index is None:
+                for opt in options_info:
+                    if value in opt["text"]:
+                        match_index = opt["index"]
+                        match_text = opt["text"]
+                        break
+
+            # 不区分大小写子串匹配
+            if match_index is None:
+                for opt in options_info:
+                    text_lower = opt["text"].lower()
+                    if value_lower in text_lower or text_lower in value_lower:
+                        match_index = opt["index"]
+                        match_text = opt["text"]
+                        break
+
+            if match_index is None:
+                all_texts = [o["text"] for o in options_info]
+                print(f"  [{field_id}] 未匹配到 '{value}'，可用选项: {all_texts}")
+                # 点击页面空白处关闭下拉
+                self.page.click("body", position={"x": 0, "y": 0}, force=True)
+                return False
+
+            # 5. 用 Playwright 点击匹配的 li（通过 JS 获取 ElementHandle）
+            li_handle = self.page.evaluate_handle("""(args) => {
+                const [fieldId, index] = args;
+                const input = document.querySelector(`input[name="${fieldId}"]`);
+                if (!input) return null;
+                const container = input.closest('.dropdown');
+                if (!container) return null;
+                const items = container.querySelectorAll('li');
+                return items[index] || null;
+            }""", [field_id, match_index]).as_element()
+
+            if li_handle:
+                li_handle.click()
                 time.sleep(0.3)
-                print(f"  [js] {field_id} -> {value} ({js_result})")
+                print(f"  [{field_id}] 选中: {match_text}")
                 return True
+            else:
+                print(f"  [{field_id}] 获取 li 元素失败")
+                return False
 
         except Exception as e:
-            print(f"  下拉框选择出错 ({field_id}): {e}")
+            print(f"  [{field_id}] 下拉框选择出错: {e}")
         return False
-
-    def _find_dropdown_option(self, value: str) -> object:
-        """在当前打开的下拉列表中查找匹配选项"""
-        # 精确匹配
-        option_selectors = [
-            f"li[data-val='{value}']",
-            f"li[data-value='{value}']",
-            f"option[value='{value}']",
-        ]
-        for selector in option_selectors:
-            option = self.page.query_selector(selector)
-            if option:
-                return option
-
-        # 文本匹配 - 查找所有可见的 li 元素
-        visible_lists = self.page.query_selector_all(
-            "ul:not([style*='display: none']):not([style*='display:none']) li, "
-            "ul.dropdown li, ul[class*='drop'] li, ul[class*='select'] li, "
-            ".dropdown-menu li, .select-options li"
-        )
-        for opt in visible_lists:
-            opt_text = (opt.text_content() or "").strip()
-            if opt_text == value:
-                return opt
-
-        # 模糊匹配
-        for opt in visible_lists:
-            opt_text = (opt.text_content() or "").strip()
-            if value in opt_text or opt_text in value:
-                return opt
-
-        return None
 
     def _map_genre_to_douban(self, genres: list) -> str:
         """将英文流派列表映射到豆瓣流派名称"""
