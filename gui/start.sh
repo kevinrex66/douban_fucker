@@ -32,18 +32,6 @@ echo -e "${YELLOW}检查依赖...${NC}"
 # 安装依赖
 $PYTHON_CMD -m pip install -q fastapi uvicorn python-multipart 2>/dev/null
 
-# 检查原项目依赖
-echo -e "${YELLOW}检查原项目依赖...${NC}"
-cd "$SCRIPT_DIR/../douban_fucker"
-
-# 尝试运行环境检查
-if [ -f "workflow.sh" ]; then
-    ./workflow.sh check 2>/dev/null || true
-fi
-
-# 返回 GUI 目录
-cd "$SCRIPT_DIR"
-
 echo ""
 echo -e "${GREEN}启动服务...${NC}"
 echo -e "浏览器将自动打开 http://127.0.0.1:18901"

@@ -4,12 +4,37 @@ FastAPI 后端
 """
 import sys
 import os
+from pathlib import Path
+
+# 检测是否在打包后的环境中运行
+FROZEN = getattr(sys, 'frozen', False)
+
+# 资源目录：打包时在 _MEIPASS，源码时在脚本同级目录
+if FROZEN and hasattr(sys, '_MEIPASS'):
+    BUNDLE_DIR = Path(sys._MEIPASS)
+else:
+    BUNDLE_DIR = Path(__file__).resolve().parent
+
+# 项目路径（统一用 Path 对象，方便 / 拼接）
+GUI_DIR = BUNDLE_DIR
+PROJECT_DIR = GUI_DIR.parent
+
+# 切换工作目录到项目根目录
+os.chdir(str(PROJECT_DIR))
+
+# 设置 Playwright 浏览器路径（打包时使用捆绑的浏览器）
+chromium_bundled = BUNDLE_DIR / "_internal" / "playwright_chromium"
+if chromium_bundled.exists():
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(chromium_bundled)
+
+# 添加原项目路径
+sys.path.insert(0, str(PROJECT_DIR / "src"))
+
 import subprocess
 import json
 import tempfile
 import webbrowser
 import threading
-from pathlib import Path
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -17,16 +42,6 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
-
-# 添加原项目路径
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-
-# 项目路径
-PROJECT_DIR = Path(__file__).parent.parent
-GUI_DIR = Path(__file__).parent
-
-# 切换工作目录到项目根目录，确保相对路径（data/albums 等）正确
-os.chdir(str(PROJECT_DIR))
 
 app = FastAPI(title="豆瓣专辑上传工具", version="1.0.0")
 
@@ -77,17 +92,15 @@ class UploadStatus(BaseModel):
 @app.get("/")
 async def root():
     """返回前端页面"""
-    return FileResponse(GUI_DIR / "index.html")
+    return FileResponse(str(GUI_DIR / "index.html"))
 
 
 @app.get("/api/status")
 async def get_status():
     """获取系统状态"""
-    # 检查豆瓣登录
     cookies_file = PROJECT_DIR / "data" / "cookies" / "douban.json"
     douban_logged_in = cookies_file.exists()
 
-    # 检查环境
     env_ok = True
     env_errors = []
 
@@ -109,15 +122,21 @@ async def get_status():
 async def login_douban():
     """打开豆瓣登录页面"""
     try:
-        # 运行 workflow.sh login
-        result = subprocess.run(
-            [str(GUI_DIR / "run_workflow.sh"), "login"],
-            capture_output=True,
-            text=True,
+        subprocess.Popen(
+            [sys.executable, "-c", f"""
+import sys, os
+os.chdir('{PROJECT_DIR}')
+sys.path.insert(0, '{PROJECT_DIR}/src')
+from douban_fucker.browser import DoubanBrowser
+browser = DoubanBrowser()
+try:
+    browser.login()
+finally:
+    pass
+"""],
             cwd=str(PROJECT_DIR),
-            timeout=300
         )
-        return {"success": True, "message": "请在浏览器中完成登录"}
+        return {"success": True, "message": "请在打开的浏览器窗口中完成豆瓣登录"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -129,8 +148,6 @@ async def search_albums(q: str, source: str = "all", limit: int = 10):
         raise HTTPException(status_code=400, detail="搜索关键词太短")
 
     try:
-        # 调用原项目的搜索功能
-        # 优先 Apple Music（有封面），后 MusicBrainz
         am_results = []
         mb_results = []
 
@@ -146,10 +163,8 @@ async def search_albums(q: str, source: str = "all", limit: int = 10):
             except Exception as e:
                 print(f"MusicBrainz 搜索失败: {e}")
 
-        # 先加 Apple Music，再加 MusicBrainz
         results = am_results + mb_results
 
-        # 去重：优先保留 Apple Music（通过标题+艺术家去重，MusicBrainz 匹配到相同的就跳过）
         seen = set()
         unique_results = []
         for r in results:
@@ -222,8 +237,6 @@ async def get_album_detail(source: str, album_id: str):
         elif source == "applemusic":
             from douban_fucker.scrapers.applemusic import AppleMusicScraper
             scraper = AppleMusicScraper()
-            # AppleMusic 用 get_album_by_url，需要构建 URL
-            # album_id 实际上是 collectionId
             url = f"https://music.apple.com/cn/album/id{album_id}"
             album = scraper.get_album_by_url(url)
 
@@ -239,11 +252,7 @@ async def get_album_detail(source: str, album_id: str):
             "source": source,
             "source_url": album.source_url or "",
             "tracklist": [
-                {
-                    "position": t.position,
-                    "title": t.title,
-                    "duration": t.duration
-                }
+                {"position": t.position, "title": t.title, "duration": t.duration}
                 for t in (album.tracklist or [])
             ],
             "genre": album.genre or [],
@@ -263,36 +272,29 @@ async def get_album_detail(source: str, album_id: str):
 async def add_album(source: str, album_id: str, upload_to_douban: bool = True):
     """添加专辑到本地并可选上传豆瓣"""
     try:
-        import tempfile
-        import shutil
-        import re
-        from pathlib import Path
         from douban_fucker.storage import FileStorage
         from douban_fucker.scrapers.musicbrainz import MusicBrainzScraper
         from douban_fucker.scrapers.applemusic import AppleMusicScraper
         from douban_fucker.utils.downloader import ImageDownloader
 
-        # 1. 获取专辑信息
         album = None
 
         if source == "musicbrainz":
             scraper = MusicBrainzScraper()
             album = scraper.get_album(album_id)
-            # 获取完整 URL
-            album_url = f"https://musicbrainz.org/release-group/{album_id}"
         elif source == "applemusic":
             scraper = AppleMusicScraper()
-            album_url = f"https://music.apple.com/cn/album/id{album_id}"
-            album = scraper.get_album_by_url(album_url)
+            url = f"https://music.apple.com/cn/album/id{album_id}"
+            album = scraper.get_album_by_url(url)
 
         if not album:
             return {"success": False, "message": "无法获取专辑信息"}
 
-        # 2. 补充信息
+        # 补充信息
         from douban_fucker.cli import supplement_album
         album = supplement_album(album)
 
-        # 3. 下载封面
+        # 下载封面
         if album.cover_url:
             try:
                 img_downloader = ImageDownloader()
@@ -303,7 +305,7 @@ async def add_album(source: str, album_id: str, upload_to_douban: bool = True):
             except Exception as e:
                 print(f"封面下载失败: {e}")
 
-        # 4. 保存到本地
+        # 保存
         storage = FileStorage()
         save_path = storage.save(album)
 
@@ -314,23 +316,18 @@ async def add_album(source: str, album_id: str, upload_to_douban: bool = True):
             "saved_path": str(save_path)
         }
 
-        # 5. 上传豆瓣 - 后台启动独立进程，让浏览器窗口正常弹出
+        # 上传豆瓣
         if upload_to_douban:
             cookies_file = PROJECT_DIR / "data" / "cookies" / "douban.json"
             if not cookies_file.exists():
-                return {
-                    **result,
-                    "douban_status": "need_login",
-                    "message": "专辑已保存，需要先登录豆瓣"
-                }
+                return {**result, "douban_status": "need_login", "message": "专辑已保存，需要先登录豆瓣"}
 
             try:
-                # 用 Popen 启动独立进程，不阻塞、不捕获输出
-                # 这样 Playwright 浏览器窗口可以正常弹出
+                proj_dir = str(PROJECT_DIR)
                 upload_script = f"""
 import sys, os
-os.chdir('{PROJECT_DIR}')
-sys.path.insert(0, '{PROJECT_DIR}/src')
+os.chdir('{proj_dir}')
+sys.path.insert(0, '{proj_dir}/src')
 from douban_fucker.browser import DoubanBrowser
 from douban_fucker.storage import FileStorage
 storage = FileStorage()
@@ -340,19 +337,19 @@ if album:
     try:
         result = browser.upload_album(album)
         if result:
-            print('唱片已存在:', result)
+            print('SUCCESS:', result)
         else:
-            print('表单已填入，请在浏览器中检查并提交')
+            print('MANUAL')
             import time
             time.sleep(300)
     except Exception as e:
-        print('上传出错:', e)
+        print('ERROR:', e)
         import time
         time.sleep(300)
 """
                 subprocess.Popen(
                     [sys.executable, "-c", upload_script],
-                    cwd=str(PROJECT_DIR),
+                    cwd=proj_dir,
                 )
                 result["douban_status"] = "manual"
                 result["message"] = "浏览器已打开，请在浏览器中检查并提交表单"
@@ -393,34 +390,32 @@ async def list_albums():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ============== 静态文件 ==============
-
-# @app.get("/assets/{path:path}")
-# async def serve_assets(path: str):
-#     return FileResponse(GUI_DIR / "assets" / path)
-
-
 # ============== 启动函数 ==============
 
-def open_browser():
+def find_free_port(start_port=18901):
+    """查找可用端口"""
+    import socket
+    for port in range(start_port, start_port + 100):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind(('127.0.0.1', port))
+            s.close()
+            return port
+        except OSError:
+            continue
+    return start_port
+
+def open_browser(port):
     """延迟打开浏览器"""
     import time
     time.sleep(1.5)
-    webbrowser.open("http://127.0.0.1:18901")
-
+    webbrowser.open(f"http://127.0.0.1:{port}")
 
 def run():
     """启动服务"""
-    # 启动浏览器
-    threading.Thread(target=open_browser, daemon=True).start()
-
-    # 启动服务器
-    uvicorn.run(
-        app,
-        host="127.0.0.1",
-        port=18901,
-        log_level="info"
-    )
+    port = find_free_port()
+    threading.Thread(target=open_browser, args=(port,), daemon=True).start()
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
 
 
 if __name__ == "__main__":

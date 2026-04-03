@@ -137,3 +137,44 @@ data/
 ├── images/       # 封面图片
 └── cookies/      # 登录状态
 ```
+
+## 打包成可执行文件
+
+> 打包后的程序约 250MB，下载 Chromium 浏览器后约 500MB
+
+### macOS
+
+```bash
+cd gui
+chmod +x build_mac.command
+./build_mac.command
+```
+
+打包完成后：
+1. 进入 `dist/豆瓣专辑上传工具/` 目录
+2. 双击 `豆瓣专辑上传工具.app`
+3. 首次运行会自动下载 Chromium（约 200MB，请保持网络连接）
+
+### Windows
+
+```bash
+cd gui
+build_win.bat
+```
+
+### Linux
+
+```bash
+cd gui
+pip install pyinstaller
+pyinstaller app.spec --clean
+./dist/豆瓣专辑上传工具/
+```
+
+### 注意事项
+
+- **首次运行**：会自动打开浏览器窗口用于豆瓣登录
+- **Chromium 下载**：首次上传豆瓣时会自动下载（约 200MB）
+- **数据位置**：与项目源码共用 `data/` 目录
+- **macOS 提示**：如果提示"无法打开"，在终端运行：`xattr -cr "dist/豆瓣专辑上传工具.app"`
+
