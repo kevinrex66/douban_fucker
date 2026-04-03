@@ -79,7 +79,7 @@ class MusicBrainzScraper(BaseScraper):
     def _get_release_group(self, rg_id: str) -> Optional[dict]:
         """获取 Release Group 信息"""
         url = f"{self.base_url}/release-group/{rg_id}"
-        params = {"fmt": "json", "inc": "artists"}
+        params = {"fmt": "json", "inc": "artists+url-rels"}
 
         try:
             with self._get_client() as client:
@@ -210,6 +210,17 @@ class MusicBrainzScraper(BaseScraper):
                 if tag.get("name"):
                     genres.append(tag["name"])
 
+            # 尝试获取 Wikipedia 简介
+            description = ""
+            wiki_url = self._get_wikipedia_url(release_group)
+            if wiki_url:
+                description = self._get_wikipedia_summary(wiki_url)
+
+            # 如果通过关系没找到，尝试直接用标题搜索 Wikipedia
+            album_title = release_group.get("title", "")
+            if not description and album_title and artist_str:
+                description = self._search_wikipedia_by_title(album_title, artist_str)
+
             album = Album(
                 title=release_group.get("title", ""),
                 artist=artist_str,
@@ -225,6 +236,7 @@ class MusicBrainzScraper(BaseScraper):
                 source=self.name,
                 source_url=f"https://musicbrainz.org/release-group/{release_group.get('id', '')}",
                 source_id=release_group.get("id", ""),
+                description=description,
                 api_source="musicbrainz_api",
             )
 
@@ -288,3 +300,177 @@ class MusicBrainzScraper(BaseScraper):
         minutes = total_seconds // 60
         seconds = total_seconds % 60
         return f"{minutes}:{seconds:02d}"
+
+    def _get_wikipedia_url(self, release_group: dict) -> Optional[str]:
+        """从 Release Group 中获取 Wikipedia URL"""
+        relations = release_group.get("relations", [])
+        wiki_url = None
+        wikidata_url = None
+
+        for rel in relations:
+            rel_type = rel.get("type", "")
+            url = rel.get("url", {}).get("resource", "")
+
+            if rel_type == "wikipedia" and url:
+                return url  # 直接返回 Wikipedia URL
+            elif rel_type == "wikidata" and url:
+                wikidata_url = url  # 保存 Wikidata URL 备用
+
+        # 如果有 Wikidata 链接，尝试获取对应的 Wikipedia 链接
+        if wikidata_url:
+            wiki_url = self._get_wikipedia_from_wikidata(wikidata_url)
+            if wiki_url:
+                return wiki_url
+
+        return None
+
+    def _get_wikipedia_from_wikidata(self, wikidata_url: str) -> Optional[str]:
+        """从 Wikidata URL 获取 Wikipedia URL"""
+        import re
+
+        # 提取 Wikidata ID
+        match = re.search(r"wikidata\.org/entity/(Q\d+)", wikidata_url)
+        if not match:
+            return None
+
+        wikidata_id = match.group(1)
+
+        try:
+            # 使用 Wikidata API 获取 sitelinks
+            api_url = f"https://www.wikidata.org/wiki/Special:EntityData/{wikidata_id}.json"
+
+            with self._get_client() as client:
+                self._rate_limit()
+                response = client.get(api_url, headers=self._get_headers())
+                if response.status_code == 200:
+                    data = response.json()
+                    entities = data.get("entities", {})
+                    entity = entities.get(wikidata_id, {})
+                    sitelinks = entity.get("sitelinks", {})
+
+                    # 优先获取中文 Wikipedia
+                    if "zhwiki" in sitelinks:
+                        title = sitelinks["zhwiki"].get("title", "")
+                        if title:
+                            return f"https://zh.wikipedia.org/wiki/{title.replace(' ', '_')}"
+
+                    # 其次英文 Wikipedia
+                    if "enwiki" in sitelinks:
+                        title = sitelinks["enwiki"].get("title", "")
+                        if title:
+                            return f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}"
+        except Exception:
+            pass
+
+        return None
+
+    def _search_wikipedia_by_title(self, title: str, artist: str) -> str:
+        """通过专辑标题和艺术家搜索 Wikipedia，优先中文"""
+        import re
+        import urllib.parse
+
+        # 先尝试中文 Wikipedia
+        search_query = f"{title} {artist} 专辑"
+        zh_summary = self._search_wikipedia_by_lang(title, artist, search_query, "zh")
+        if zh_summary:
+            return zh_summary
+
+        # 中文没有则尝试英文
+        search_query = f"{title} {artist} album"
+        return self._search_wikipedia_by_lang(title, artist, search_query, "en")
+
+    def _search_wikipedia_by_lang(self, title: str, artist: str, search_query: str, lang: str) -> str:
+        """在指定语言的 Wikipedia 中搜索"""
+        import urllib.parse
+
+        try:
+            encoded_query = urllib.parse.quote(search_query)
+            search_url = f"https://{lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch={encoded_query}&format=json&srlimit=5"
+
+            with self._get_client() as client:
+                self._rate_limit()
+                response = client.get(search_url, headers=self._get_headers())
+                if response.status_code == 200:
+                    data = response.json()
+                    search_results = data.get("query", {}).get("search", [])
+
+                    # 找到最匹配的结果
+                    for result in search_results:
+                        result_title = result.get("title", "")
+                        result_lower = result_title.lower()
+
+                        # 中文 Wikipedia：检查是否包含"专辑"关键词
+                        if lang == "zh":
+                            if "专辑" in result_title or "專輯" in result_title:
+                                # 获取摘要
+                                page_title = result_title.replace(" ", "_")
+                                summary = self._get_wikipedia_summary_by_title(page_title, lang)
+                                if summary:
+                                    return summary
+                        else:
+                            # 英文 Wikipedia：检查标题是否包含专辑名或艺术家
+                            title_lower = title.lower()
+                            artist_lower = artist.lower()
+                            if title_lower in result_lower or artist_lower in result_lower:
+                                page_title = result_title.replace(" ", "_")
+                                summary = self._get_wikipedia_summary_by_title(page_title, lang)
+                                if summary:
+                                    return summary
+
+        except Exception:
+            pass
+
+        return ""
+
+    def _get_wikipedia_summary_by_title(self, page_title: str, lang: str = "en") -> str:
+        """通过 Wikipedia 页面标题获取摘要"""
+        try:
+            api_url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{page_title}"
+
+            with self._get_client() as client:
+                self._rate_limit()
+                response = client.get(api_url, headers=self._get_headers())
+                if response.status_code == 200:
+                    data = response.json()
+                    extract = data.get("extract", "")
+                    # 限制长度，避免太长的简介
+                    if extract and len(extract) > 1000:
+                        extract = extract[:997] + "..."
+                    return extract
+        except Exception:
+            pass
+
+        return ""
+
+    def _get_wikipedia_summary(self, wiki_url: str) -> str:
+        """从 Wikipedia URL 获取简介"""
+        import re
+
+        # 提取 Wikipedia 页面标题
+        match = re.search(r"wikipedia\.org/wiki/(.+)$", wiki_url)
+        if not match:
+            return ""
+
+        page_title = match.group(1)
+
+        # 使用 Wikipedia API 获取简介
+        try:
+            # 确定语言版本
+            lang_match = re.search(r"^(\w+)\.wikipedia\.org", wiki_url)
+            lang = lang_match.group(1) if lang_match else "en"
+
+            api_url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{page_title}"
+
+            with self._get_client() as client:
+                self._rate_limit()
+                response = client.get(api_url, headers=self._get_headers())
+                if response.status_code == 200:
+                    data = response.json()
+                    # 获取 extract 字段作为简介
+                    extract = data.get("extract", "")
+                    if extract:
+                        return extract
+        except Exception:
+            pass
+
+        return ""

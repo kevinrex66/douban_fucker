@@ -293,47 +293,47 @@ class DoubanBrowser:
     def _wait_and_handle_cover_upload(self, album: Album) -> None:
         """等待用户点击下一步，然后处理封面上传页面"""
         try:
-            print("等待您点击【下一步】...")
-            print("（检测到封面上传页面后会自动上传封面）")
+            print("\n" + "="*50)
+            print("表单已填写完成！")
+            print("请在浏览器中点击【下一步】进入封面上传页面")
+            print("点击后程序会自动上传封面")
+            print("="*50 + "\n")
 
-            # 使用 Playwright 的等待机制
-            max_wait = 60  # 最多等待60秒
+            # 无限循环等待封面上传页面出现
+            print("等待封面上传页面...")
+            file_input = None
+            check_interval = 0.5  # 每0.5秒检查一次
 
-            try:
-                # 等待封面上传 input 元素出现
-                # 豆瓣的封面上传页面有 input[type='file']
-                print("等待封面上传页面...")
-                file_input = self.page.wait_for_selector(
-                    "input[type='file']",
-                    timeout=max_wait * 1000  # 转换为毫秒
-                )
+            while file_input is None:
+                try:
+                    # 检查是否有文件上传输入框
+                    file_input = self.page.query_selector("input[type='file']")
 
-                if file_input:
-                    print("找到封面上传页面!")
+                    if file_input:
+                        print("\n✓ 检测到封面上传页面!")
+                        break
 
-                    # 上传封面图片
-                    if album.cover_image:
-                        cover_path = Path(album.cover_image)
-                        if cover_path.exists():
-                            print(f"上传封面图片: {cover_path}")
-                            file_input.set_input_files(str(cover_path))
-                            time.sleep(3)
-                            print("封面已上传，请检查并提交")
-                            return
-                        else:
-                            print(f"封面文件不存在: {cover_path}")
-                            return
-                    else:
-                        print("未找到封面图片")
-                        return
+                    # 检查是否还在表单页面（通过检查特定的表单元素）
+                    # 如果还在表单页面，继续等待
+                    time.sleep(check_interval)
 
-            except Exception as wait_e:
-                error_msg = str(wait_e)
-                if "timeout" in error_msg.lower():
-                    print("等待封面上传页面超时（60秒）")
-                    print("请在浏览器中手动点击【下一步】上传封面")
+                except Exception:
+                    time.sleep(check_interval)
+                    continue
+
+            # 找到封面上传页面后，上传封面
+            if file_input and album.cover_image:
+                cover_path = Path(album.cover_image)
+                if cover_path.exists():
+                    print(f"正在上传封面: {cover_path.name}")
+                    file_input.set_input_files(str(cover_path))
+                    time.sleep(2)
+                    print("✓ 封面已上传")
+                    print("\n请检查封面是否正确，然后提交表单")
                 else:
-                    print(f"等待时出错: {wait_e}")
+                    print(f"✗ 封面文件不存在: {cover_path}")
+            elif not album.cover_image:
+                print("✗ 未找到封面图片，请手动上传")
 
         except Exception as e:
             print(f"处理封面上传时出错: {e}")

@@ -374,6 +374,40 @@ class AppleMusicScraper(BaseScraper):
             match = re.search(r"/album/[^/]+/(\d+)", url)
             album_id = match.group(1) if match else url
 
+            # 获取专辑简介/描述
+            description = ""
+            # 方法1: 从 JSON-LD 的 description 字段获取
+            if json_ld:
+                description = json_ld.get("description", "")
+                # 清理描述中的歌曲数量信息，保留简介内容
+                if description:
+                    # 移除 "X 首歌曲" 这类信息
+                    description = re.sub(r'\n?\d+\s*首歌曲\n?', '', description).strip()
+                    # 移除发行日期行
+                    description = re.sub(r'\n?\d{4}年\d{1,2}月\d{1,2}日\n?', '', description).strip()
+                    # 移除版权行 (以 © 或 ℗ 开头)
+                    description = re.sub(r'\n?[©℗].*$', '', description, flags=re.MULTILINE).strip()
+
+            # 方法2: 从页面 meta 标签获取
+            if not description:
+                meta_desc = soup.select_one('meta[name="description"]')
+                if meta_desc:
+                    description = meta_desc.get("content", "")
+
+            # 方法3: 从页面特定区域获取
+            if not description:
+                desc_selectors = [
+                    ".section__description",
+                    "[data-testid='description']",
+                    ".album-description",
+                    ".description"
+                ]
+                for selector in desc_selectors:
+                    desc_elem = soup.select_one(selector)
+                    if desc_elem:
+                        description = desc_elem.get_text(strip=True)
+                        break
+
             album = Album(
                 title=title,
                 artist=artist,
@@ -387,6 +421,7 @@ class AppleMusicScraper(BaseScraper):
                 source=self.name,
                 source_id=album_id,
                 source_url=url,
+                description=description,
                 api_source="applemusic_page",
             )
 

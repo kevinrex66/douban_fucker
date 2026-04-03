@@ -254,6 +254,8 @@ cmd_full() {
     echo ""
     log_info "启动交互式搜索和添加..."
     echo ""
+    echo -e "${YELLOW}💡 提示: 推荐选择 Apple Music 来源的专辑，曲目信息最完整${NC}"
+    echo ""
     run_python main.py interactive "$query"
     print_divider
     log_success "工作流程完成!"

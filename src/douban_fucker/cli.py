@@ -147,11 +147,18 @@ def supplement_album(album: Album, primary_source: str = None) -> Album:
     import re
 
     completeness = check_album_completeness(album)
-    if completeness["is_complete"]:
+    # 检查是否缺少简介
+    needs_description = not album.description or len(album.description.strip()) < 10
+
+    if completeness["is_complete"] and not needs_description:
         return album
 
-    console.print(f"\n[yellow]信息不完整，缺少: {', '.join(completeness['issues'])}[/yellow]")
-    console.print("[dim]尝试从其他来源补充...[/dim]")
+    if not completeness["is_complete"]:
+        console.print(f"\n[yellow]信息不完整，缺少: {', '.join(completeness['issues'])}[/yellow]")
+        console.print("[dim]尝试从其他来源补充...[/dim]")
+
+    if needs_description:
+        console.print("[dim]尝试获取专辑简介...[/dim]")
 
     # 准备搜索关键词（移除括号内容和特定词汇）
     clean_title = album.title or ''
@@ -166,10 +173,12 @@ def supplement_album(album: Album, primary_source: str = None) -> Album:
 
     console.print(f"[dim]搜索关键词: {search_query}[/dim]")
 
-    # 1. 先从 MusicBrainz 获取，可能有 Apple Music URL
+    # 1. 优先从 MusicBrainz 获取简介（通过 Wikipedia）
     mb_apple_url = None
     mb_cover_url = None
-    if album.tracklist or not album.genre or not album.label or not album.cover_url:
+    mb_scraper = None
+
+    if needs_description or not album.tracklist or not album.genre or not album.label or not album.cover_url:
         try:
             mb_scraper = get_scraper("musicbrainz")
             results = mb_scraper.search(search_query, limit=3)
@@ -182,8 +191,14 @@ def supplement_album(album: Album, primary_source: str = None) -> Album:
                         mb_apple_url = mb_album.source_url
                     if mb_album.cover_url and not album.cover_url:
                         mb_cover_url = mb_album.cover_url
-                    
-                    # 补充基本信息
+
+                    # 优先补充简介（从 Wikipedia）
+                    if needs_description and mb_album.description:
+                        album.description = mb_album.description
+                        console.print(f"[green]从 Wikipedia 补充简介[/green]")
+                        needs_description = False
+
+                    # 补充其他基本信息
                     if not album.artist and mb_album.artist:
                         album.artist = mb_album.artist
                         console.print(f"[green]补充艺术家: {album.artist}[/green]")
@@ -223,6 +238,7 @@ def supplement_album(album: Album, primary_source: str = None) -> Album:
                     if not album.cover_url and apple_album.cover_url:
                         album.cover_url = apple_album.cover_url
                         console.print(f"[green]补充封面 URL[/green]")
+                    # 不再从 Apple Music 获取简介，优先使用 Wikipedia
             else:
                 # 使用搜索和 URL 构建
                 tracklist = _try_get_apple_music_tracks(apple_scraper, search_query, artist_name, original_title)
@@ -234,7 +250,22 @@ def supplement_album(album: Album, primary_source: str = None) -> Album:
         except Exception as e:
             console.print(f"[dim]Apple Music 补充失败: {e}[/dim]")
 
-    # 3. 补充封面（如果 MusicBrainz 有的话）
+    # 3. 如果 Wikipedia 没有获取到简介，尝试从 Discogs 获取
+    if needs_description:
+        try:
+            discogs_scraper = get_scraper("discogs")
+            results = discogs_scraper.search(search_query, limit=3)
+            if results:
+                discogs_id = results[0].album.source_id
+                discogs_album = discogs_scraper.get_album(discogs_id)
+                if discogs_album and discogs_album.description:
+                    album.description = discogs_album.description
+                    console.print(f"[green]从 Discogs 补充简介[/green]")
+                    needs_description = False
+        except Exception as e:
+            console.print(f"[dim]Discogs 简介获取失败: {e}[/dim]")
+
+    # 4. 补充封面（如果 MusicBrainz 有的话）
     if not album.cover_url and mb_cover_url:
         album.cover_url = mb_cover_url
         console.print(f"[green]从 MusicBrainz 补充封面 URL[/green]")
@@ -244,6 +275,12 @@ def supplement_album(album: Album, primary_source: str = None) -> Album:
     if not completeness["is_complete"]:
         console.print(f"[yellow]仍有信息缺失: {', '.join(completeness['issues'])}[/yellow]")
         console.print("[dim]专辑仍会被保存，部分信息需要手动补充[/dim]")
+
+    # 检查简介获取情况
+    if needs_description and not album.description:
+        console.print("[yellow]未能获取到专辑简介[/yellow]")
+    elif album.description:
+        console.print(f"[green]✓ 已获取专辑简介 ({len(album.description)} 字符)[/green]")
 
     return album
 
