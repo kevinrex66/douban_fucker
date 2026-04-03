@@ -100,6 +100,16 @@ scrapers:
 - Spotify: https://developer.spotify.com/dashboard
 - Discogs: https://www.discogs.com/settings/developers
 
+## 更新日志
+
+### 2025-04-02
+- **优化专辑简介获取**：优先从 Wikipedia 获取中文简介
+  - Apple Music 爬虫新增专辑简介获取
+  - MusicBrainz 爬虫支持三重容错获取 Wikipedia 简介（关系链接 → Wikidata → 标题搜索）
+  - 简介获取优先级：Wikipedia（中文优先）> Discogs，跳过 Apple Music
+- **优化封面上传流程**：改为阻塞等待用户点击【下一步】，避免超时自动跳过
+- **workflow 提示**：添加推荐选择 Apple Music 来源的提示
+
 ## 数据存储
 
 ```
