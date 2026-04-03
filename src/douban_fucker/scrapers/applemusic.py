@@ -133,7 +133,11 @@ class AppleMusicScraper(BaseScraper):
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, "lxml")
 
-                return self._parse_album_page(soup, url)
+                album = self._parse_album_page(soup, url)
+                # 不使用 Apple Music 的简介，简介应从 Wikipedia 获取
+                if album:
+                    album.description = ""
+                return album
 
         except Exception as e:
             print(f"Apple Music album fetch failed: {e}")

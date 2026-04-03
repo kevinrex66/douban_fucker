@@ -1,4 +1,4 @@
-# 音乐专辑多功能爬虫ß
+# 音乐专辑多功能爬虫
 
 从多个音乐数据库搜索专辑，保存到本地，自动上传到豆瓣。
 
@@ -11,7 +11,20 @@ playwright install chromium
 
 ## 快速开始
 
-### 一行命令完成所有操作（推荐）
+### 网页可视化界面（推荐，零门槛）
+
+```bash
+pip install fastapi uvicorn python-multipart
+python gui/main.py
+```
+
+启动后浏览器自动打开，使用流程：
+
+1. 在搜索框输入专辑名
+2. 从列表中点击选择正确的专辑
+3. 确认后自动保存并上传豆瓣
+
+### 一行命令完成所有操作
 
 ```bash
 ./workflow.sh full "专辑名"
@@ -101,6 +114,12 @@ scrapers:
 - Discogs: https://www.discogs.com/settings/developers
 
 ## 更新日志
+
+### 2025-04-03
+- **新增网页可视化界面（gui/）**：无需命令行，浏览器中完成全部操作
+  - 输入专辑名即可搜索，列表展示结果（优先 Apple Music）
+  - 点击选择后自动获取详情、保存并上传豆瓣
+  - 启动命令：`python gui/main.py`
 
 ### 2025-04-02
 - **优化专辑简介获取**：优先从 Wikipedia 获取中文简介
