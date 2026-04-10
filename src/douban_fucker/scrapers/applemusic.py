@@ -225,10 +225,11 @@ class AppleMusicScraper(BaseScraper):
                         year = int(year_match.group(1))
 
                 # Genre - Apple Music 的 JSON-LD 中有 genre 字段
+                # 过滤掉无意义的通用标签如 "音乐"、"Music"
                 json_genre = json_ld.get("genre", [])
                 if isinstance(json_genre, list):
-                    genre_list = [g for g in json_genre if g]
-                elif json_genre:
+                    genre_list = [g for g in json_genre if g and g not in ["音乐", "Music"]]
+                elif json_genre and json_genre not in ["音乐", "Music"]:
                     genre_list = [json_genre]
 
                 # Track count from description (e.g., "4 首歌曲")
@@ -311,15 +312,38 @@ class AppleMusicScraper(BaseScraper):
                         label = m.group(1).strip().rstrip(",.")
                         break
 
-            # 获取封面
-            cover_url = meta_tags.get("og:image", "")
+            # 获取封面 - 优先从 JSON-LD 或 DOM 获取正方形封面
+            cover_url = ""
+            
+            # 方法1: 从 JSON-LD 的 image 字段获取
+            if json_ld and not cover_url:
+                json_image = json_ld.get("image", "")
+                if isinstance(json_image, str) and json_image:
+                    cover_url = json_image
+            
+            # 方法2: 从 DOM 元素获取正方形封面
             if not cover_url:
-                cover_elem = soup.select_one(".media-artwork-v2 img, [data-testid='album-artwork'] img")
+                cover_elem = soup.select_one(".media-artwork-v2 img, [data-testid='album-artwork'] img, .artwork img")
                 if cover_elem:
                     cover_url = cover_elem.get("src", "")
-
-            # 清理封面 URL - 保留原始 URL
-            cover_url = re.sub(r"\.webp\?.*$", ".jpg", cover_url)
+            
+            # 方法3: 从 og:image 获取（需要转换格式）
+            if not cover_url:
+                og_image = meta_tags.get("og:image", "")
+                if og_image:
+                    cover_url = og_image
+            
+            # 转换为高质量正方形封面
+            # Apple Music 图片 URL 格式：
+            # - 1200x630wp-60 是横幅格式（社交分享用）
+            # - 1200x1200bb 是正方形封面格式
+            if cover_url:
+                # 转换横幅格式为正方形格式
+                cover_url = re.sub(r"/\d+x\d+wp-\d+", "/1200x1200bb", cover_url)
+                # 转换小尺寸为高分辨率
+                cover_url = re.sub(r"/\d+x\d+bb", "/1200x1200bb", cover_url)
+                # 清理 webp 格式
+                cover_url = re.sub(r"\.webp\?.*$", ".jpg", cover_url)
 
             # 获取曲目列表 - from JSON-LD (tracks field)
             tracklist = []

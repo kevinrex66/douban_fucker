@@ -301,9 +301,20 @@ async def add_album(source: str, album_id: str, upload_to_douban: bool = True):
                 album.generate_id()
                 local_path = img_downloader.download(album.cover_url, album.id)
                 if local_path:
-                    album.cover_image = local_path
+                    # 验证图片文件是否真实存在且有效
+                    from pathlib import Path
+                    cover_file = Path(local_path)
+                    if cover_file.exists() and cover_file.stat().st_size > 0:
+                        album.cover_image = local_path
+                        print(f"封面下载成功: {local_path}")
+                    else:
+                        print(f"封面文件无效或为空: {local_path}")
+                        album.cover_image = None
+                else:
+                    print("封面下载失败: 无法获取本地路径")
             except Exception as e:
                 print(f"封面下载失败: {e}")
+                album.cover_image = None
 
         # 保存
         storage = FileStorage()

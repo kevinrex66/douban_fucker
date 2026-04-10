@@ -505,14 +505,20 @@ class DoubanBrowser:
             # 找到封面上传页面后，上传封面
             if file_input and album.cover_image:
                 cover_path = Path(album.cover_image)
-                if cover_path.exists():
+                # 再次验证封面文件是否真实存在
+                if cover_path.exists() and cover_path.stat().st_size > 0:
                     print(f"正在上传封面: {cover_path.name}")
                     file_input.set_input_files(str(cover_path))
                     time.sleep(2)
                     print("✓ 封面已上传")
-                    print("\n请检查封面是否正确，然后提交表单")
+                    print("\n" + "="*50)
+                    print("请检查封面是否正确")
+                    print("确认无误后，请手动点击【提交】按钮")
+                    print("浏览器将保持打开状态等待您操作")
+                    print("="*50)
                 else:
-                    print(f"✗ 封面文件不存在: {cover_path}")
+                    print(f"✗ 封面文件不存在或无效: {cover_path}")
+                    print("请手动上传封面")
             elif not album.cover_image:
                 print("✗ 未找到封面图片，请手动上传")
 
